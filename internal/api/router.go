@@ -21,6 +21,7 @@ func NewRouter(e *engine.Engine) http.Handler {
 	authH := handlers.NewAuthHandlers(authSystem)
 
 	// Public endpoints (no auth)
+	mux.HandleFunc("/", h.Health)
 	mux.HandleFunc("/health", h.Health)
 	mux.HandleFunc("/api/auth/login", authH.Login)
 
