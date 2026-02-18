@@ -1,0 +1,9 @@
+
+data/
+*.db
+*.seg
+*.wal
+*.exe
+*.log
+.vscode/
+.idea/
