@@ -81,7 +81,7 @@ No Go installation required
 ---
 
 ```md
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Mac-blue)
-![Language](https://img.shields.io/badge/language-Go-00ADD8)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-Active-success)
+[Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Mac-blue)
+[Language](https://img.shields.io/badge/language-Go-00ADD8)
+[License](https://img.shields.io/badge/license-MIT-green)
+[Status](https://img.shields.io/badge/status-Active-success)
