@@ -1,9 +1,48 @@
+# =========================
+# AstraDB runtime data (MUST ignore)
+# =========================
 
-data/
+databases/
+**/databases/
+collections/
+**/collections/
+wal/
+**/wal/
+metadata/
+**/metadata/
+
+# Storage files
 *.db
 *.seg
 *.wal
-*.exe
 *.log
+
+# =========================
+# Secrets
+# =========================
+.env
+*.env
+
+# =========================
+# Go build artifacts
+# =========================
+*.exe
+*.out
+*.test
+*.prof
+bin/
+dist/
+
+# =========================
+# OS / Editor
+# =========================
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+
+# =========================
+# Optional: temp
+# =========================
+tmp/
+*.tmp
