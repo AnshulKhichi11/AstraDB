@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,48 +14,74 @@ import (
 )
 
 func main() {
-	// Command line flags
+	// -----------------------------
+	// Command Line Flags
+	// -----------------------------
 	walMode := flag.String("wal-mode", "batch", "WAL sync mode: immediate, batch, async")
 	walBatch := flag.Int("wal-batch", 100, "WAL batch size")
 	checkpointInterval := flag.Int("checkpoint", 60, "Checkpoint interval (seconds)")
-	
 	flag.Parse()
 
 	cfg := engine.DefaultConfig()
-	
-	// Apply flags
+
 	cfg.WALSyncMode = engine.WALSyncMode(*walMode)
 	cfg.WALBatchSize = *walBatch
 	cfg.CheckpointInterval = time.Duration(*checkpointInterval) * time.Second
 
+	// -----------------------------
+	// Initialize Engine
+	// -----------------------------
 	eng, err := engine.New(cfg)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Engine initialization failed: %v", err)
 	}
 
-	// Start auto-compaction
 	eng.StartAutoCompaction(5 * time.Minute)
 
 	router := api.NewRouter(eng)
 
-	// Graceful shutdown
+	// Detect mode
+	authEnabled := os.Getenv("ASTRA_AUTH") == "true"
+	mode := "DEVELOPMENT"
+	if authEnabled {
+		mode = "PRODUCTION"
+	}
+
+	// -----------------------------
+	// Startup Information
+	// -----------------------------
+	log.Println("--------------------------------------------------")
+	log.Println("AstraDB Server Starting")
+	log.Println("--------------------------------------------------")
+	log.Printf("Mode               : %s", mode)
+	log.Printf("Server Address     : http://localhost:8080")
+	log.Printf("Storage Path       : %s/<db>/collections/<collection>/segments/", cfg.DBsDir)
+	log.Printf("WAL Mode           : %s", cfg.WALSyncMode)
+	log.Printf("WAL Batch Size     : %d", cfg.WALBatchSize)
+	log.Printf("Checkpoint Interval: %s", cfg.CheckpointInterval)
+	log.Printf("Auto Compaction    : every 5m")
+	log.Println("--------------------------------------------------")
+	log.Println("Server is ready to accept connections")
+	log.Println("")
+
+	// -----------------------------
+	// Graceful Shutdown
+	// -----------------------------
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 		<-sigChan
 
-		fmt.Println("\n🛑 Shutdown signal received...")
+		log.Println("Shutdown signal received")
 		eng.Shutdown()
+		log.Println("AstraDB stopped gracefully")
 		os.Exit(0)
 	}()
 
-	fmt.Println("✅ AstraDB Server: http://localhost:8080")
-	fmt.Println("📁 Storage:", cfg.DBsDir+"/<db>/collections/<collection>/segments/")
-	fmt.Println("🪵 WAL Mode:", cfg.WALSyncMode)
-	fmt.Println("🔄 Auto-compaction: Every 5 minutes")
-	fmt.Println("💾 Checkpoint: Every", cfg.CheckpointInterval)
-
+	// -----------------------------
+	// Start HTTP Server
+	// -----------------------------
 	if err := http.ListenAndServe(":8080", router); err != nil {
-		panic(err)
+		log.Fatalf("Server failed: %v", err)
 	}
 }

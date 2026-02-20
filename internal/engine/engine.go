@@ -82,8 +82,11 @@ func New(cfg Config) (*Engine, error) {
 
 	// Start auto-checkpoint
 	walv2.StartAutoCheckpoint(func() error {
-		return e.flushAll()
-	})
+    if err := e.flushAll(); err != nil {
+        return err
+    }
+    return e.walv2.Checkpoint() // ✅ clear WAL after durable snapshot
+})
 
 	return e, nil
 }
@@ -528,14 +531,14 @@ func (e *Engine) Shutdown() error {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	fmt.Println("🛑 Shutting down AstraDB...")
+	fmt.Println("Shutting down AstraDB...")
 
 	for _, db := range e.databases {
 		db.mu.RLock()
 		for _, c := range db.collections {
 			c.mu.Lock()
 			if c.useSegments && c.segmentMgr != nil {
-				fmt.Printf("💾 Compacting %s/%s\n", db.Name, c.Name)
+				fmt.Printf("Compacting %s/%s\n", db.Name, c.Name)
 				_ = c.segmentMgr.Compact()
 				_ = c.segmentMgr.Close()
 			}
@@ -543,8 +546,10 @@ func (e *Engine) Shutdown() error {
 		}
 		db.mu.RUnlock()
 	}
+	_ = e.flushAll()
+_ = e.walv2.Checkpoint()
 
-	fmt.Println("✅ Shutdown complete")
+	fmt.Println("Shutdown complete")
 	return nil
 }
 

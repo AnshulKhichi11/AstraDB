@@ -1,8 +1,8 @@
 package api
 
 import (
-	"net/http"
 	"fmt"
+	"net/http"
 	"os"
 
 	"testDB/internal/api/handlers"
@@ -21,7 +21,6 @@ func NewRouter(e *engine.Engine) http.Handler {
 	authH := handlers.NewAuthHandlers(authSystem)
 
 	// Public endpoints (no auth)
-	mux.HandleFunc("/", h.Health)
 	mux.HandleFunc("/health", h.Health)
 	mux.HandleFunc("/api/auth/login", authH.Login)
 
@@ -38,6 +37,12 @@ func NewRouter(e *engine.Engine) http.Handler {
 	protected.HandleFunc("/api/createIndex", h.CreateIndex)
 	protected.HandleFunc("/api/compact", h.Compact)
 	protected.HandleFunc("/api/segment-stats", h.SegmentStats)
+	// Schema endpoints
+	protected.HandleFunc("/api/schema/create", h.SaveSchema)
+	protected.HandleFunc("/api/schema", h.GetSchema)
+	protected.HandleFunc("/api/schema/update", h.UpdateSchema)
+	protected.HandleFunc("/api/schema/delete", h.DeleteSchema)
+	protected.HandleFunc("/api/schema/validate", h.ValidateDocument)
 
 	// Admin-only endpoints
 	protected.HandleFunc("/api/auth/users", authSystem.RequireAdmin(authH.ListUsers))
@@ -51,11 +56,8 @@ func NewRouter(e *engine.Engine) http.Handler {
 	// Apply middleware: rate limiting -> auth -> handlers
 	//chain := rateLimiter.Middleware(100)(authSystem.Middleware(protected))
 
-	
 	// Add to protected endpoints
-    protected.HandleFunc("/api/wal-stats", h.WALStats)
-
-
+	protected.HandleFunc("/api/wal-stats", h.WALStats)
 
 	// ─────────────────────────────────────────
 	// AUTH MODE CHECK
