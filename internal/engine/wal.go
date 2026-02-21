@@ -74,20 +74,23 @@ func (e *Engine) replayWAL() error {
 
 func (e *Engine) replayWALv2() error {
 	e.walMu.Lock()
+
+	// Set replaying flag BEFORE unlocking walMu so Insert/Update/Delete
+	// see it immediately. We hold walMu for the duration of replay.
 	e.replaying = true
-	defer func() {
-		e.replaying = false
-		e.walMu.Unlock()
-	}()
 
 	entries, err := e.walv2.Replay()
 	if err != nil {
+		e.replaying = false
+		e.walMu.Unlock()
 		return err
 	}
 
 	for _, entry := range entries {
 		switch entry.Op {
 		case "insert":
+			// Insert already checks docExistsInSegments when e.replaying == true,
+			// so duplicates from snapshot + WAL overlap are safely skipped.
 			_, _ = e.Insert(entry.DB, entry.Collection, entry.Doc, false)
 		case "update":
 			_, _ = e.Update(entry.DB, entry.Collection, entry.Filter, entry.Update, entry.Multi, false)
@@ -96,14 +99,23 @@ func (e *Engine) replayWALv2() error {
 		}
 	}
 
-	// After replay, checkpoint (clear WAL)
+	e.replaying = false
+	e.walMu.Unlock()
+
+	// After replay, always checkpoint to clear the WAL.
+	// This prevents the same entries from being replayed again on the next startup.
+	// flushAll() persists the current state (segments already have latest data,
+	// but legacy Docs collections need flushing).
+	if err := e.flushAll(); err != nil {
+		return err
+	}
+	if err := e.walv2.Checkpoint(); err != nil {
+		return err
+	}
+
 	if len(entries) > 0 {
-		if err := e.flushAll(); err != nil {
-			return err
-		}
-		if err := e.walv2.Checkpoint(); err != nil {
-			return err
-		}
+		// Log how many entries were replayed so it's visible on startup
+		_ = len(entries) // already printed by walv2.Replay()
 	}
 
 	return nil
