@@ -10,7 +10,33 @@ import (
 )
 
 func (c *Collection) saveLocked() error {
-	b, err := json.MarshalIndent(c.Docs, "", "  ")
+	// Deduplicate by _id (preserve last occurrence)
+	seen := map[string]bool{}
+	uniqueRev := make([]types.Document, 0, len(c.Docs))
+	for i := len(c.Docs) - 1; i >= 0; i-- {
+		d := c.Docs[i]
+		idStr := ""
+		if id, ok := d["_id"].(string); ok {
+			idStr = id
+		}
+		if idStr == "" {
+			// keep documents without _id (shouldn't normally happen)
+			uniqueRev = append(uniqueRev, d)
+			continue
+		}
+		if _, ok := seen[idStr]; ok {
+			continue
+		}
+		seen[idStr] = true
+		uniqueRev = append(uniqueRev, d)
+	}
+	// reverse back to original order (with duplicates removed)
+	unique := make([]types.Document, 0, len(uniqueRev))
+	for i := len(uniqueRev) - 1; i >= 0; i-- {
+		unique = append(unique, uniqueRev[i])
+	}
+
+	b, err := json.MarshalIndent(unique, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -77,6 +103,31 @@ func (e *Engine) loadSnapshots() error {
 					for i := range docs {
 						docs[i] = canonicalizeDocument(docs[i])
 					}
+					// Deduplicate loaded documents by _id (preserve last occurrence)
+					seen := map[string]bool{}
+					uniqueRev := make([]types.Document, 0, len(docs))
+					for i := len(docs) - 1; i >= 0; i-- {
+						d := docs[i]
+						idStr := ""
+						if id, ok := d["_id"].(string); ok {
+							idStr = id
+						}
+						if idStr == "" {
+							uniqueRev = append(uniqueRev, d)
+							continue
+						}
+						if _, ok := seen[idStr]; ok {
+							continue
+						}
+						seen[idStr] = true
+						uniqueRev = append(uniqueRev, d)
+					}
+					// reverse back
+					uniq := make([]types.Document, 0, len(uniqueRev))
+					for i := len(uniqueRev) - 1; i >= 0; i-- {
+						uniq = append(uniq, uniqueRev[i])
+					}
+					docs = uniq
 				}
 			} else if err != nil && !os.IsNotExist(err) {
 				// Optional: log unexpected read errors
