@@ -85,7 +85,7 @@ func New(cfg Config) (*Engine, error) {
     if err := e.flushAll(); err != nil {
         return err
     }
-    return e.walv2.Checkpoint() // ✅ clear WAL after durable snapshot
+    return e.walv2.Checkpoint() // clear WAL after durable snapshot
 })
 
 	return e, nil
@@ -153,6 +153,35 @@ func (db *Database) getOrCreateCollection(cfg Config, collName string) (*Collect
 	return c, nil
 }
 
+// docExistsInSegments checks if a document with the given ID already exists
+// in segment storage. Used during WAL replay to prevent duplicates.
+func (c *Collection) docExistsInSegments(docID string) bool {
+	if !c.useSegments || c.segmentMgr == nil {
+		return false
+	}
+	docs, err := c.segmentMgr.ReadAll()
+	if err != nil {
+		return false
+	}
+	for _, d := range docs {
+		if id, ok := d["_id"].(string); ok && id == docID {
+			return true
+		}
+	}
+	return false
+}
+
+// docExistsInDocs checks if a document with the given ID already exists
+// in the in-memory Docs slice. Used during WAL replay to prevent duplicates.
+func (c *Collection) docExistsInDocs(docID string) bool {
+	for _, d := range c.Docs {
+		if id, ok := d["_id"].(string); ok && id == docID {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) Insert(dbName, collName string, doc types.Document, doLog bool) (string, error) {
 	db, err := e.getOrCreateDB(dbName)
 	if err != nil {
@@ -184,6 +213,22 @@ func (e *Engine) Insert(dbName, collName string, doc types.Document, doLog bool)
 	}
 
 	docID := fmt.Sprintf("%v", doc["_id"])
+
+	// During WAL replay: skip insert if the document already exists in storage.
+	// This prevents duplicates caused by: loadSnapshots (loads from segments)
+	// followed by replayWALv2 (re-inserts the same docs from WAL).
+	if e.replaying {
+		if c.useSegments && c.segmentMgr != nil {
+			if c.docExistsInSegments(docID) {
+				// Doc already loaded from snapshot — WAL replay is redundant, skip it.
+				return docID, nil
+			}
+		} else {
+			if c.docExistsInDocs(docID) {
+				return docID, nil
+			}
+		}
+	}
 
 	// Use segments if available, otherwise fallback to old method
 	if c.useSegments && c.segmentMgr != nil {
@@ -547,7 +592,7 @@ func (e *Engine) Shutdown() error {
 		db.mu.RUnlock()
 	}
 	_ = e.flushAll()
-_ = e.walv2.Checkpoint()
+	_ = e.walv2.Checkpoint()
 
 	fmt.Println("Shutdown complete")
 	return nil
