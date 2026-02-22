@@ -51,7 +51,7 @@ func main() {
 	// Startup Information
 	// -----------------------------
 	log.Println("--------------------------------------------------")
-	log.Println("AstraDB Server Starting")
+	log.Println("AstraDB Starting")
 	log.Println("--------------------------------------------------")
 	log.Printf("Mode               : %s", mode)
 	log.Printf("Server Address     : http://localhost:8080")
