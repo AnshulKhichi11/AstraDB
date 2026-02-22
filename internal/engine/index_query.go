@@ -6,9 +6,24 @@ import (
 	"testDB/internal/types"
 )
 
+// findByID looks up a document by ID.
+// NOTE: caller must NOT hold c.mu — this function acquires it internally.
 func (c *Collection) findByID(id string) (types.Document, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	// Support segments
+	if c.useSegments && c.segmentMgr != nil {
+		docs, err := c.segmentMgr.ReadAll()
+		if err == nil {
+			for _, d := range docs {
+				if s, ok := d["_id"].(string); ok && s == id {
+					return d, true
+				}
+			}
+		}
+		return nil, false
+	}
 
 	for _, d := range c.Docs {
 		if s, ok := d["_id"].(string); ok && s == id {
@@ -18,13 +33,12 @@ func (c *Collection) findByID(id string) (types.Document, bool) {
 	return nil, false
 }
 
-// Planner:
-// 1) If range filter exists ($gt/$gte/$lt/$lte) and btree index exists -> use it
-// 2) Else if equality filter matches a compound/single hash index -> use it
-// 3) Else nil (fallback full scan)
+// candidateIDsByIndex returns candidate doc IDs using an index, if one applies.
+// IMPORTANT: caller must already hold c.mu (read or write) — this function
+// does NOT acquire c.mu to avoid a double-lock deadlock.
+// (Query holds c.mu.RLock before calling this.)
 func (c *Collection) candidateIDsByIndex(filter map[string]any) ([]string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	// ── NO c.mu.RLock here ── caller already holds it
 
 	// --- 1) Range (btree) ---
 	for field, want := range filter {
@@ -33,7 +47,6 @@ func (c *Collection) candidateIDsByIndex(filter map[string]any) ([]string, bool)
 			continue
 		}
 		if hasRangeOp(opMap) {
-			// find btree meta name
 			name := indexName("btree", []string{field})
 			idx, ok := c.IndexesBTree[name]
 			if !ok || idx.Meta.Status != "ready" {
@@ -45,7 +58,6 @@ func (c *Collection) candidateIDsByIndex(filter map[string]any) ([]string, bool)
 	}
 
 	// --- 2) Hash (multi-field equality) ---
-	// Find the "best" hash index: most fields matched
 	bestName := ""
 	bestFields := 0
 	for name, meta := range c.IndexMetas {
@@ -58,7 +70,6 @@ func (c *Collection) candidateIDsByIndex(filter map[string]any) ([]string, bool)
 				ok = false
 				break
 			}
-			// only direct equality (not op map) for hash usage
 			if _, isOp := filter[f].(map[string]any); isOp {
 				ok = false
 				break
@@ -75,7 +86,7 @@ func (c *Collection) candidateIDsByIndex(filter map[string]any) ([]string, bool)
 		if idx == nil {
 			return nil, false
 		}
-		key := compoundKey(types.Document(filter), c.IndexMetas[bestName].Fields) // cheap: uses toKeyString
+		key := compoundKey(types.Document(filter), c.IndexMetas[bestName].Fields)
 		ids := idx.Entries[key]
 		return ids, true
 	}
@@ -94,7 +105,6 @@ func hasRangeOp(m map[string]any) bool {
 }
 
 func btreeRangeLookup(idx *BTreeIndex, opMap map[string]any) []string {
-	// bounds
 	loSet, hiSet := false, false
 	var lo, hi float64
 	loInc, hiInc := false, false
@@ -121,7 +131,6 @@ func btreeRangeLookup(idx *BTreeIndex, opMap map[string]any) []string {
 	}
 
 	keys := idx.Keys
-	// binary search lower
 	start := 0
 	if loSet {
 		start = sort.Search(len(keys), func(i int) bool {
@@ -131,7 +140,6 @@ func btreeRangeLookup(idx *BTreeIndex, opMap map[string]any) []string {
 			return keys[i] > lo
 		})
 	}
-	// binary search upper
 	end := len(keys)
 	if hiSet {
 		end = sort.Search(len(keys), func(i int) bool {
@@ -142,8 +150,12 @@ func btreeRangeLookup(idx *BTreeIndex, opMap map[string]any) []string {
 		})
 	}
 
-	if start < 0 { start = 0 }
-	if end > len(keys) { end = len(keys) }
+	if start < 0 {
+		start = 0
+	}
+	if end > len(keys) {
+		end = len(keys)
+	}
 	if start >= end {
 		return []string{}
 	}
@@ -158,11 +170,14 @@ func btreeRangeLookup(idx *BTreeIndex, opMap map[string]any) []string {
 func btreeKey(idx *BTreeIndex, v any) float64 {
 	if idx.Kind == "number" {
 		n, ok := toNumber(v)
-		if ok { return n }
+		if ok {
+			return n
+		}
 		return 0
 	}
-	// time: store unixNano
 	t, ok := toTime(v)
-	if ok { return float64(t.UnixNano()) }
+	if ok {
+		return float64(t.UnixNano())
+	}
 	return 0
 }
