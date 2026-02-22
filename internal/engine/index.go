@@ -13,13 +13,13 @@ import (
 )
 
 type IndexMeta struct {
-	Name       string   `json:"name"`
-	Type       string   `json:"type"` // "hash" | "btree"
-	Fields     []string `json:"fields"`
-	Unique     bool     `json:"unique"`
-	Status     string   `json:"status"` // "building" | "ready"
-	CreatedAt  int64    `json:"createdAt"`
-	UpdatedAt  int64    `json:"updatedAt"`
+	Name      string   `json:"name"`
+	Type      string   `json:"type"` // "hash" | "btree"
+	Fields    []string `json:"fields"`
+	Unique    bool     `json:"unique"`
+	Status    string   `json:"status"` // "building" | "ready"
+	CreatedAt int64    `json:"createdAt"`
+	UpdatedAt int64    `json:"updatedAt"`
 }
 
 type HashIndex struct {
@@ -29,8 +29,6 @@ type HashIndex struct {
 
 type BTreeIndex struct {
 	Meta IndexMeta
-
-	// only for single field btree
 	Kind string // "number" | "time"
 	Keys []float64
 	Map  map[float64][]string
@@ -41,8 +39,7 @@ func indexName(indexType string, fields []string) string {
 }
 
 func (c *Collection) indexesPath(cfg Config) string {
-	// data/databases/<db>/collections/<coll>/indexes.json
-	collDir := filepath.Dir(c.DataFile) // .../<coll>
+	collDir := filepath.Dir(c.DataFile)
 	return filepath.Join(collDir, "indexes.json")
 }
 
@@ -90,14 +87,20 @@ func (c *Collection) saveIndexMetas(cfg Config) error {
 
 func (e *Engine) CreateIndex(dbName, collName string, fields []string, indexType string, unique bool, background bool) error {
 	db, err := e.getOrCreateDB(dbName)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	c, err := db.getOrCreateCollection(e.cfg, collName)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	fieldsNorm := make([]string, 0, len(fields))
 	for _, f := range fields {
 		f = strings.TrimSpace(f)
-		if f != "" { fieldsNorm = append(fieldsNorm, f) }
+		if f != "" {
+			fieldsNorm = append(fieldsNorm, f)
+		}
 	}
 	if len(fieldsNorm) == 0 {
 		return errors.New("fields required")
@@ -115,7 +118,6 @@ func (e *Engine) CreateIndex(dbName, collName string, fields []string, indexType
 
 	c.mu.Lock()
 	c.ensureIndexMaps()
-	// already exists?
 	if meta, ok := c.IndexMetas[name]; ok && meta.Status == "ready" {
 		c.mu.Unlock()
 		return nil
@@ -138,24 +140,36 @@ func (e *Engine) CreateIndex(dbName, collName string, fields []string, indexType
 		c.mu.Lock()
 		defer c.mu.Unlock()
 
-		// Build snapshot from existing docs
-		// Copy docs (avoid mutation)
-		snap := make([]types.Document, 0, len(c.Docs))
-		for _, d := range c.Docs {
-			snap = append(snap, d)
+		// ── FIXED: read from segments if available, else use c.Docs ──────
+		var snap []types.Document
+		if c.useSegments && c.segmentMgr != nil {
+			var err error
+			snap, err = c.segmentMgr.ReadAll()
+			if err != nil {
+				snap = []types.Document{}
+			}
+		} else {
+			snap = make([]types.Document, 0, len(c.Docs))
+			for _, d := range c.Docs {
+				snap = append(snap, d)
+			}
 		}
+		// ─────────────────────────────────────────────────────────────────
 
 		if indexType == "hash" {
 			idx, err := buildHashIndex(meta, snap)
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			c.IndexesHash[name] = idx
 		} else {
 			idx, err := buildBTreeIndex(meta, snap)
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			c.IndexesBTree[name] = idx
 		}
 
-		// mark ready
 		m := c.IndexMetas[name]
 		m.Status = "ready"
 		m.UpdatedAt = time.Now().Unix()
@@ -175,11 +189,10 @@ func (e *Engine) CreateIndex(dbName, collName string, fields []string, indexType
 func buildHashIndex(meta IndexMeta, docs []types.Document) (*HashIndex, error) {
 	idx := &HashIndex{Meta: meta, Entries: map[string][]string{}}
 
-	seenUnique := map[string]string{} // key -> docID
+	seenUnique := map[string]string{}
 
 	for _, d := range docs {
 		id, _ := d["_id"].(string)
-
 		key := compoundKey(d, meta.Fields)
 		if meta.Unique {
 			if prev, ok := seenUnique[key]; ok && prev != id {
@@ -196,7 +209,6 @@ func buildBTreeIndex(meta IndexMeta, docs []types.Document) (*BTreeIndex, error)
 	field := meta.Fields[0]
 	idx := &BTreeIndex{Meta: meta, Map: map[float64][]string{}}
 
-	// detect kind (number/time) by scanning docs
 	kind := ""
 	for _, d := range docs {
 		v, ok := getNestedField(d, field)
@@ -227,11 +239,15 @@ func buildBTreeIndex(meta IndexMeta, docs []types.Document) (*BTreeIndex, error)
 		var k float64
 		if kind == "number" {
 			n, ok := toNumber(v)
-			if !ok { continue }
+			if !ok {
+				continue
+			}
 			k = n
 		} else {
 			t, ok := toTime(v)
-			if !ok { continue }
+			if !ok {
+				continue
+			}
 			k = float64(t.UnixNano())
 		}
 
@@ -244,7 +260,6 @@ func buildBTreeIndex(meta IndexMeta, docs []types.Document) (*BTreeIndex, error)
 		idx.Map[k] = append(idx.Map[k], id)
 	}
 
-	// sort keys
 	keys := make([]float64, 0, len(idx.Map))
 	for k := range idx.Map {
 		keys = append(keys, k)
@@ -264,7 +279,9 @@ func compoundKey(doc types.Document, fields []string) string {
 }
 
 func toKeyString(v any) string {
-	if v == nil { return "null" }
+	if v == nil {
+		return "null"
+	}
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(
 		strings.TrimSpace(toString(v)),
 		"|", "_"), "\n", " "), "\r", " "))
