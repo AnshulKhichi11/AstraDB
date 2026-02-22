@@ -74,7 +74,7 @@ func main() {
 
 		log.Println("Shutdown signal received")
 		eng.Shutdown()
-		log.Println("AstraDB stopped gracefully")
+		log.Println("AstraDB stopped")
 		os.Exit(0)
 	}()
 
