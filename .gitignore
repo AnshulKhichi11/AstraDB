@@ -26,7 +26,6 @@ metadata/
 # =========================
 # Go build artifacts
 # =========================
-*.exe
 *.out
 *.test
 *.prof
